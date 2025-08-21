@@ -1,125 +1,92 @@
 Highly Available Web App on AWS (ALB + ASG)
 
-A production-style, auto-healing web stack built 100% in the AWS Console. It’s designed for small businesses and teams that want reliable uptime without a big budget or complex tooling.
+A small, production-style, auto-healing web stack built entirely in the AWS Console — designed for small teams and solo founders who want reliable uptime without heavy ops overhead.
 
-What this solves (business outcomes)
+Outcome: If a server fails, traffic keeps flowing and a replacement is created automatically. Instances are private; only the Load Balancer is public.
 
-Stays online if a server fails (no single point of failure).
+Quick Links
 
-Zero-touch recovery: failed servers are removed from traffic and automatically replaced.
+▶️ Runbook (2-minute demo): docs/runbook.md
 
-Safer exposure: only the Load Balancer is public; app servers are private behind it.
+🧹 Cleanup (avoid charges): docs/cleanup.md
 
-Simple to operate: no SSH, no custom images, repeatable with a single launch template.
+What This Delivers (Customer Value)
 
-What’s included (deliverables)
+High Availability: Two instances across 2 AZs behind an Application Load Balancer (ALB).
 
-Application Load Balancer (public :80) in 2 Availability Zones
+Auto-Healing: Unhealthy instances are removed from traffic and replaced automatically by the Auto Scaling Group (ASG).
 
-Target Group with HTTP health checks (/)
+Safer Exposure: Only the ALB is public. Instances accept port 80 only from the ALB’s security group (SG-to-SG rule).
 
-Auto Scaling Group (2× t2.micro) across 2 AZs with ELB health checks
+Simple Operations: Repeatable bootstrapping via a Launch Template + user data; no SSH required.
 
-Launch Template (Amazon Linux 2023) with user data to install Apache and render the instance ID
+Architecture (How It Works)
 
-Least-privilege Security Groups (ALB is public; EC2 only trusts the ALB SG)
+ALB (HTTP :80) is the single public entry point.
 
-Runbook (how to demo auto-healing) and Cleanup (how to avoid charges)
+Target Group performs HTTP health checks on /.
 
-Evidence screenshots (below)
+ASG (desired=2, min=2, max=2) launches instances across two AZs using a Launch Template.
 
-Architecture (how it works)
+Security Groups:
 
-The ALB is the only public entry point, listening on HTTP :80.
+proj1-alb-sg → inbound :80 from 0.0.0.0/0
 
-Requests are forwarded to the Target Group, which sends traffic only to healthy instances.
+proj1-ec2-sg → inbound :80 from ALB security group (SG-as-source)
 
-The Auto Scaling Group keeps the desired count (2). If one instance fails:
+<pre><code>Internet │ ▼ [ Application Load Balancer :80 ] (sg: proj1-alb-sg, inbound 0.0.0.0/0) │ ▼ [ Target Group ] -- Health check: HTTP GET "/" │ ▼ [ Auto Scaling Group (2x EC2, 2 AZs) ] ├── [ EC2 #1 ] (sg: proj1-ec2-sg, allows :80 only from ALB SG) └── [ EC2 #2 ] (sg: proj1-ec2-sg) </code></pre>
+Implementation Details (For Reviewers)
 
-ALB marks it unhealthy and stops sending traffic.
-
-ASG launches a replacement to get back to 2.
-
-Security Groups enforce that only the ALB may talk to app instances on :80.
-
-Flow:
-Internet → ALB :80 → Target Group (health check /) → ASG (2× EC2, 2 AZs)
-
-Screenshots (evidence)
-<h3>Security Groups</h3> <img src="./screenshots/01-sg-alb-inbound.png" alt="ALB inbound 0.0.0.0/0 :80" width="900"> <img src="./screenshots/02-sg-ec2-inbound.png" alt="EC2 allows :80 from ALB SG" width="900"> <h3>Target Group</h3> <img src="./screenshots/03-tg-healthcheck.png" alt="Health check path /" width="900"> <img src="./screenshots/04-tg-healthy-targets.png" alt="Healthy targets across two AZs" width="900"> <h3>Load Balancer</h3> <img src="./screenshots/05-alb-description-dns.png" alt="ALB details and DNS name" width="900"> <img src="./screenshots/06-alb-listener.png" alt="Listener :80 forwarding to target group" width="900"> <h3>Auto Scaling Group</h3> <img src="./screenshots/07-asg-activity-replace.png" alt="ASG activity replacing a terminated instance" width="900"> <img src="./screenshots/08-asg-instances-inservice.png" alt="Two instances InService after heal" width="900"> <h3>App proof (refresh shows different IDs)</h3> <img src="./screenshots/09-app-instanceA.png" alt="App served by instance A" width="900"> <img src="./screenshots/10-app-instanceB.png" alt="App served by instance B" width="900">
-Tech details (for engineers & reviewers)
-
-Launch Template user data (Amazon Linux 2023):
+Launch Template – User Data (Amazon Linux 2023):
 
 <pre><code>#!/bin/bash set -euxo pipefail dnf -y update dnf -y install httpd # IMDSv2 token for metadata TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") INSTANCE_ID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id) echo "&lt;h1&gt;Hi from $INSTANCE_ID&lt;/h1&gt;" &gt; /var/www/html/index.html systemctl enable httpd systemctl start httpd </code></pre>
 
-Security Groups
+Target Group Health Check
 
-proj1-alb-sg: inbound HTTP :80 from 0.0.0.0/0
+Protocol: HTTP
 
-proj1-ec2-sg: inbound HTTP :80 from ALB security group (SG-as-source)
+Path: /
 
-Health checks (Target Group)
+Success codes: 200
 
-Protocol: HTTP, Path: /, Success codes: 200
+Evidence (Screenshots)
+<h3>Security Groups</h3> <img src="./screenshots/01-sg-alb-inbound.png" alt="ALB inbound 0.0.0.0/0 :80" width="900"> <img src="./screenshots/02-sg-ec2-inbound.png" alt="EC2 allows :80 from ALB SG" width="900"> <h3>Target Group</h3> <img src="./screenshots/03-tg-healthcheck.png" alt="Health check path /" width="900"> <img src="./screenshots/04-tg-healthy-targets.png" alt="Healthy targets across two AZs" width="900"> <h3>Load Balancer</h3> <img src="./screenshots/05-alb-description-dns.png" alt="ALB details and DNS name" width="900"> <img src="./screenshots/06-alb-listener.png" alt="Listener :80 forwarding to target group" width="900"> <h3>Auto Scaling Group</h3> <img src="./screenshots/07-asg-activity-replace.png" alt="ASG activity replacing a terminated instance" width="900"> <img src="./screenshots/08-asg-instances-inservice.png" alt="Two instances InService after heal" width="900"> <h3>App Proof (refresh shows different IDs)</h3> <img src="./screenshots/09-app-instanceA.png" alt="App served by instance A" width="900"> <img src="./screenshots/10-app-instanceB.png" alt="App served by instance B" width="900">
+Demo & Operation
 
-How to demo (2-minute runbook)
+How to demo (2 minutes): docs/runbook.md
 
-See: docs/runbook.md
+Refresh the ALB DNS to watch the instance IDs alternate; terminate one instance to see auto-healing without downtime.
 
-Refresh the ALB DNS to see instance IDs alternate.
+Safe cleanup (stop costs): docs/cleanup.md
 
-Terminate one instance → no downtime; ASG replaces it; ALB only sends traffic to the healthy one.
+Delete in order → ASG → Launch Template → ALB → Target Group → Security Groups.
 
-Cleanup (avoid charges)
+Cost Considerations (For Stakeholders)
 
-See: docs/cleanup.md
+ALB has a small hourly fee; t2.micro may be Free Tier (depending on account age/eligibility).
 
-Delete in order: ASG → Launch Template → ALB → Target Group → Security Groups.
+For demos, record screenshots/video and tear down the stack after use to keep the bill at pennies.
 
-Cost notes (tiny for demos)
+Who This Is For
 
-ALB has a small hourly fee.
+Small businesses/creators needing reliable uptime without heavy ops.
 
-t2.micro may be Free Tier (depending on your account).
-For portfolio demos: capture screenshots/video, then tear down the stack.
+Early-career cloud engineers showcasing real HA patterns (great portfolio item).
 
-Who this is for
+Teams starting simple, then growing into HTTPS, alarms, and CI/CD.
 
-Solo founders & small businesses that want simple, reliable uptime.
+Roadmap (Simple Add-Ons)
 
-Early-career cloud/devops folks who need a real HA reference build for interviews.
+HTTPS + custom domain: ACM certificate + :443 listener, redirect :80→:443
 
-Teams that want a minimal, auditable starting point before adding HTTPS, domains, alarms, and CI/CD.
+Path-based routing: /api* to a second target group (different port)
 
-Optional next steps (easy add-ons)
+Observability: CloudWatch alarms (ALB 5xx, UnHealthyHostCount), basic dashboards
 
-HTTPS + domain (ACM certificate + :443 listener, redirect :80→:443)
+Blue/Green: new Launch Template versions with rolling updates
 
-Path-based routing (e.g., /api* to a second target group on a different port)
-
-CloudWatch alarms (ALB 5xx, UnHealthyHostCount)
-
-Blue/green updates using new Launch Template versions
-
-Repo structure
-.
-├─ README.md
-├─ docs/
-│  ├─ runbook.md
-│  └─ cleanup.md
-└─ screenshots/
-   ├─ 01-sg-alb-inbound.png
-   ├─ 02-sg-ec2-inbound.png
-   ├─ 03-tg-healthcheck.png
-   ├─ 04-tg-healthy-targets.png
-   ├─ 05-alb-description-dns.png
-   ├─ 06-alb-listener.png
-   ├─ 07-asg-activity-replace.png
-   ├─ 08-asg-instances-inservice.png
-   ├─ 09-app-instanceA.png
-   └─ 10-app-instanceB.png
-
+Repository Structure
+<pre><code>. ├─ README.md ├─ docs/ │ ├─ runbook.md │ └─ cleanup.md └─ screenshots/ ├─ 01-sg-alb-inbound.png ├─ 02-sg-ec2-inbound.png ├─ 03-tg-healthcheck.png ├─ 04-tg-healthy-targets.png ├─ 05-alb-description-dns.png ├─ 06-alb-listener.png ├─ 07-asg-activity-replace.png ├─ 08-asg-instances-inservice.png ├─ 09-app-instanceA.png └─ 10-app-instanceB.png </code></pre>
 License
 
 MIT (optional)
